@@ -346,7 +346,7 @@ button {
 .concl { font-size: 13.5px; color: var(--foam); padding: 5px 0; }
 .concl.is-caution { color: var(--coral); }
 
-.cal { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.cal { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .cal-cell { text-align: center; padding: 8px 2px; background: var(--raise); border-radius: 10px; }
 .cal-wd { font-size: 11px; color: var(--slate); }
 .cal-d { font-size: 13px; font-weight: 700; margin-top: 2px; }

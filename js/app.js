@@ -654,9 +654,9 @@
       conclCard.hidden = true
     }
 
-    // 7 天日历
+    // 9 天日历
     const cells = []
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 9; i++) {
       const dms = GT.tz.addLocalDays(st, today.dayStart, i)
       const a = analyseOne(st, model, weather, marine, dms)
       const p = GT.format.parts(dms, st)
