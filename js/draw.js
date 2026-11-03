@@ -104,6 +104,44 @@
     ctx.rect(L, T, plotW, plotH)
     ctx.clip()
 
+    /* ---- 鱼情佳时段 ---- */
+    const fishWindows = opts.fishing?.best || []
+    for (let i = 0; i < fishWindows.length; i++) {
+      const slot = fishWindows[i]
+      const start = Math.max(t0, slot.start)
+      const end = Math.min(t1, slot.end)
+      if (end <= start) continue
+      const x1 = x(start)
+      const x2 = x(end)
+      ctx.fillStyle = 'rgba(143, 209, 138, 0.13)'
+      ctx.fillRect(x1, T, x2 - x1, plotH)
+      ctx.strokeStyle = 'rgba(143, 209, 138, 0.45)'
+      ctx.lineWidth = 1
+      ctx.setLineDash([3, 4])
+      ctx.beginPath()
+      ctx.moveTo(x1, T)
+      ctx.lineTo(x1, B)
+      ctx.moveTo(x2, T)
+      ctx.lineTo(x2, B)
+      ctx.stroke()
+      ctx.setLineDash([])
+
+      if (x2 - x1 >= 44) {
+        const label = '鱼情 ' + slot.score
+        ctx.font = '600 10px -apple-system, "PingFang SC", sans-serif'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        const center = (x1 + x2) / 2
+        const labelWidth = ctx.measureText(label).width + 12
+        ctx.fillStyle = 'rgba(7, 26, 32, 0.82)'
+        ctx.beginPath()
+        roundRect(ctx, center - labelWidth / 2, T + 4, labelWidth, 18, 6)
+        ctx.fill()
+        ctx.fillStyle = '#bde8b3'
+        ctx.fillText(label, center, T + 13)
+      }
+    }
+
     /* ---- 曲线 + 下方填充 ---- */
     ctx.beginPath()
     ctx.moveTo(x(series[0].t), y(series[0].h))

@@ -8,7 +8,9 @@
   'use strict'
 
   const $ = (sel) => document.querySelector(sel)
-  const VERSION = 'v1.0.0'
+  const VERSION = 'v1.1.0'
+  const LIVE_STATION_ID = 'live-location'
+  const MAP_STATION_ID = 'map-location'
 
   /* ------------------------------------------------------------------ */
   /* 应用状态                                                            */
@@ -25,12 +27,26 @@
     cursor: null,
     weather: null,
     marine: null,
+    fishOverlay: null,
     envStationId: null,
     envPromise: null,
     activeType: 'all',
     searchQuery: '',
     searchTimer: null,
-    upgradeStationId: null
+    upgradeStationId: null,
+    liveWatchId: null,
+    lastLiveAt: 0,
+    lastLiveLat: null,
+    lastLiveLon: null,
+    guideMode: 'species',
+    guideType: 'all',
+    guideQuery: '',
+    map: {
+      zoom: 6,
+      lat: 36.06,
+      lon: 120.38,
+      renderFrame: null
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -44,10 +60,10 @@
   /** 同步获取可用的潮汐模型（缓存 → 估算），用于首屏即时渲染 */
   function syncModel() {
     const st = state.station
-    const cached = GT.store.getHarmonics(st.id)
+    const cached = GT.store.getHarmonics(GT.data.harmonicsId(st))
     if (cached && cached.constituents && cached.constituents.length) {
       state.model = { z0: cached.z0, constituents: cached.constituents }
-      state.modelSource = cached.provider === 'noaa' ? 'noaa' : 'cache'
+      state.modelSource = cached.provider || 'cache'
       state.modelDatum = cached.datum || ''
     } else {
       state.model = GT.data.estimateModel(st)
@@ -57,19 +73,23 @@
     return state.model
   }
 
-  /** 后台升级：美国站点拉取 NOAA 权威调和常数 */
+  /** 后台升级：优先 NOAA，其次 Open-Meteo 全球潮位 */
   function maybeUpgrade() {
     const st = state.station
-    if (!st.noaa) return
-    if (GT.store.getHarmonics(st.id)) return
-    if (state.upgradeStationId === st.id) return
-    state.upgradeStationId = st.id
+    const modelId = GT.data.harmonicsId(st)
+    if (GT.store.getHarmonics(modelId)) return
+    if (state.upgradeStationId === modelId) return
+    state.upgradeStationId = modelId
     GT.data.getModel(st).then((res) => {
       state.upgradeStationId = null
-      if (state.station && state.station.id === st.id && res.source === 'noaa') {
+      if (
+        state.station &&
+        GT.data.harmonicsId(state.station) === modelId &&
+        res.source !== 'estimate'
+      ) {
         state.model = res.model
-        state.modelSource = 'noaa'
-        state.modelDatum = res.datum || 'MLLW'
+        state.modelSource = res.source
+        state.modelDatum = res.datum || ''
         renderTide()
         renderFishing()
       }
@@ -80,11 +100,13 @@
   /* 站点选择                                                            */
   /* ------------------------------------------------------------------ */
 
-  function selectStation(station) {
+  function selectStation(station, options) {
+    if (!options || !options.keepLive) stopLiveLocation()
     state.station = station
     state.dayMs = Date.now()
     state.cursor = null
     state.model = null
+    state.fishOverlay = null
     state.weather = null
     state.marine = null
     state.envStationId = null
@@ -120,6 +142,13 @@
     const model = syncModel()
     const day = GT.data.buildDay(st, model, state.dayMs)
     state.day = day
+    state.fishOverlay = analyseOne(
+      st,
+      model,
+      state.weather,
+      state.marine,
+      state.dayMs
+    )
     const isToday = day.dayStart <= Date.now() && Date.now() < day.dayEnd
     const now = Date.now()
     const hUnit = settings.height === 'ft' ? 'ft' : 'm'
@@ -190,6 +219,26 @@
     $('#tide-datepicker').value = GT.format.parts(day.dayStart, st).dayKey
 
     drawTide()
+    ensureWeather().then((env) => {
+      if (
+        !state.station ||
+        state.station.id !== st.id ||
+        Math.abs(state.station.lat - st.lat) > 0.00001 ||
+        Math.abs(state.station.lon - st.lon) > 0.00001 ||
+        !state.day ||
+        state.day.dayStart !== day.dayStart
+      ) {
+        return
+      }
+      state.fishOverlay = analyseOne(
+        st,
+        model,
+        env.weather,
+        env.marine,
+        state.dayMs
+      )
+      drawTide()
+    })
     maybeUpgrade()
   }
 
@@ -266,7 +315,13 @@
       heightUnit: settings.height,
       nowMs: isToday ? Date.now() : 0,
       cursor: state.cursor,
-      readout: readout
+      readout: readout,
+      fishing: state.fishOverlay
+        ? {
+            best: state.fishOverlay.best,
+            hourly: state.fishOverlay.hourly
+          }
+        : null
     })
   }
 
@@ -632,6 +687,161 @@
   }
 
   /* ------------------------------------------------------------------ */
+  /* 鱼种与钓组教程                                                      */
+  /* ------------------------------------------------------------------ */
+
+  function renderGuide() {
+    const speciesView = $('#guide-species-view')
+    const rigsView = $('#guide-rigs')
+    document.querySelectorAll('.guide-mode').forEach((button) => {
+      button.classList.toggle('is-on', button.dataset.guideMode === state.guideMode)
+    })
+    speciesView.hidden = state.guideMode !== 'species'
+    rigsView.hidden = state.guideMode !== 'rigs'
+
+    if (state.guideMode === 'rigs') {
+      if (!rigsView.dataset.rendered) {
+        rigsView.innerHTML = GT.guide.rigs
+          .map(
+            (rig) =>
+              '<article class="rig-card" id="rig-' +
+              rig.id +
+              '">' +
+              '<div class="rig-card-head">' +
+              '<div class="rig-kicker">' +
+              rig.level +
+              '钓组</div>' +
+              '<div class="rig-title">' +
+              rig.name +
+              '</div>' +
+              '<div class="rig-target">适配：' +
+              rig.target +
+              '</div></div>' +
+              '<div class="rig-body"><div class="rig-visual">' +
+              GT.guide.rigDiagram(rig.id) +
+              '</div><div><div class="rig-parts">' +
+              rig.parts
+                .map((part) => '<span class="rig-part">' + part + '</span>')
+                .join('') +
+              '</div><ol class="rig-steps">' +
+              rig.steps.map((step) => '<li>' + step + '</li>').join('') +
+              '</ol><div class="rig-note">' +
+              rig.note +
+              '</div></div></div></article>'
+          )
+          .join('')
+        rigsView.dataset.rendered = '1'
+      }
+      return
+    }
+
+    const groups = ['all'].concat(
+      GT.guide.species
+        .map((fish) => fish.group)
+        .filter((group, index, list) => list.indexOf(group) === index)
+    )
+    $('#guide-types').innerHTML = groups
+      .map(
+        (group) =>
+          '<button type="button" class="guide-type' +
+          (state.guideType === group ? ' is-on' : '') +
+          '" data-guide-type="' +
+          group +
+          '">' +
+          (group === 'all' ? '全部' : group) +
+          '</button>'
+      )
+      .join('')
+
+    const query = state.guideQuery.trim().toLowerCase()
+    const fishList = GT.guide.species.filter((fish) => {
+      if (state.guideType !== 'all' && fish.group !== state.guideType) {
+        return false
+      }
+      if (!query) return true
+      return [
+        fish.name,
+        fish.alias,
+        fish.group,
+        fish.habitat,
+        fish.bait
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(query)
+    })
+
+    $('#species-grid').innerHTML = fishList.length
+      ? fishList
+          .map(
+            (fish) =>
+              '<button type="button" class="species-card" data-species-id="' +
+              fish.id +
+              '">' +
+              '<div class="species-card-head"><span class="species-mark">' +
+              fish.mark +
+              '</span><span><span class="species-name">' +
+              fish.name +
+              '</span><span class="species-alias">' +
+              fish.alias +
+              '</span></span></div>' +
+              '<div class="species-summary">' +
+              fish.summary +
+              '</div><div class="species-meta"><span class="species-pill">' +
+              fish.group +
+              '</span><span class="species-pill">' +
+              fish.bait.split('、')[0] +
+              '</span></div></button>'
+          )
+          .join('')
+      : '<div class="guide-empty">没有找到匹配鱼种</div>'
+  }
+
+  function openSpeciesDetail(id) {
+    const fish = GT.guide.species.find((item) => item.id === id)
+    if (!fish) return
+    const rigs = fish.rigIds
+      .map((rigId) => GT.guide.rigs.find((rig) => rig.id === rigId))
+      .filter(Boolean)
+    $('#species-detail-kicker').textContent = fish.group + ' · ' + fish.alias
+    $('#species-detail-title').textContent = fish.name
+    $('#species-detail-body').innerHTML =
+      '<div class="detail-block"><div class="detail-label">一般出现位置</div><div class="detail-value">' +
+      fish.habitat +
+      '</div></div>' +
+      '<div class="detail-block"><div class="detail-label">活跃季节与时段</div><div class="detail-value">' +
+      fish.season +
+      '</div></div>' +
+      '<div class="detail-block"><div class="detail-label">常见水层</div><div class="detail-value">' +
+      fish.depth +
+      '</div></div>' +
+      '<div class="detail-block"><div class="detail-label">推荐饵料</div><div class="detail-value">' +
+      fish.bait +
+      '</div></div>' +
+      '<div class="detail-block"><div class="detail-label">推荐钓组</div><div class="species-meta">' +
+      rigs
+        .map(
+          (rig) =>
+            '<button type="button" class="species-pill" data-rig-link="' +
+            rig.id +
+            '">' +
+            rig.name +
+            '</button>'
+        )
+        .join('') +
+      '</div></div>' +
+      '<div class="detail-block"><div class="detail-label">实战提示</div><div class="detail-value">' +
+      fish.tip +
+      '</div></div>' +
+      '<div class="detail-warning">钓法与鱼种资源受地区法规影响，请先确认当地禁渔期、许可、最小可捕尺寸和数量限制。</div>'
+    $('#species-detail').hidden = false
+  }
+
+  function closeSpeciesDetail() {
+    $('#species-detail').hidden = true
+  }
+
+  /* ------------------------------------------------------------------ */
   /* 设置页                                                              */
   /* ------------------------------------------------------------------ */
 
@@ -695,6 +905,11 @@
     renderSearchTypes()
     renderSearchRecent()
     runSearch('')
+    if (state.liveWatchId !== null) {
+      setLocationStatus('实时定位正在运行，移动到新位置会自动更新。')
+    } else {
+      setLocationStatus('')
+    }
     setTimeout(() => $('#search-input').focus(), 60)
   }
 
@@ -746,32 +961,327 @@
   }
 
   function pickStation(id) {
-    const station = GT.stations.get(id)
+    const station =
+      GT.stations.get(id) ||
+      GT.store.getRecent().find((item) => item.id === id)
     if (!station) return
     closeSearch()
     selectStation(station)
     switchTab('tide')
   }
 
-  /* ---------- 定位 ---------- */
+  /* ---------- 实时定位 ---------- */
 
-  function locate() {
+  function setLocationStatus(text, isError) {
+    const el = $('#location-status')
+    el.textContent = text || ''
+    el.hidden = !text
+    el.classList.toggle('is-error', Boolean(isError))
+  }
+
+  function makeCoordinateStation(lat, lon, kind, timeZone) {
+    const isLive = kind === 'live'
+    const zone = timeZone || null
+    return {
+      id: isLive ? LIVE_STATION_ID : MAP_STATION_ID,
+      name: isLive ? '当前位置' : '自选位置',
+      nameEn: isLive ? 'Current location' : 'Map selection',
+      country: isLive ? '实时定位' : '地图选点',
+      cc: '--',
+      lat: Math.round(lat * 1000000) / 1000000,
+      lon: Math.round(lon * 1000000) / 1000000,
+      tz: zone
+        ? GT.tz.offsetFor({ timeZone: zone }, Date.now())
+        : Math.round(lon / 15),
+      timeZone: zone,
+      dst: null,
+      type: 'custom'
+    }
+  }
+
+  function stopLiveLocation() {
+    if (state.liveWatchId !== null && navigator.geolocation) {
+      navigator.geolocation.clearWatch(state.liveWatchId)
+    }
+    state.liveWatchId = null
+  }
+
+  function applyResolvedTimezone(station, lat, lon) {
+    GT.data.fetchTimezone(station).then((zone) => {
+      if (!zone || !state.station || state.station.id !== station.id) return
+      if (
+        Math.abs(state.station.lat - lat) > 0.00001 ||
+        Math.abs(state.station.lon - lon) > 0.00001
+      ) {
+        return
+      }
+      state.station.timeZone = zone.timeZone
+      state.station.tz = zone.tz
+      GT.store.setStation(state.station)
+      state.weather = null
+      state.marine = null
+      state.envStationId = null
+      state.envPromise = null
+      renderTide()
+      renderFishing()
+      if (isViewActive('weather')) renderWeather()
+    })
+  }
+
+  function startLiveLocation() {
     if (!navigator.geolocation) {
-      window.alert('当前浏览器不支持定位')
+      setLocationStatus('当前浏览器不支持实时定位。', true)
       return
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const near = GT.stations.near(pos.coords.latitude, pos.coords.longitude, 1)
-        if (near.length) {
-          pickStation(near[0].station.id)
-        } else {
-          window.alert('未找到附近站点')
+    stopLiveLocation()
+    state.lastLiveAt = 0
+    state.lastLiveLat = null
+    state.lastLiveLon = null
+    setLocationStatus('正在获取当前位置，请允许浏览器定位权限…')
+
+    state.liveWatchId = navigator.geolocation.watchPosition(
+      (position) => {
+        if (state.liveWatchId === null) return
+        const lat = position.coords.latitude
+        const lon = position.coords.longitude
+        const now = Date.now()
+        const moved =
+          state.lastLiveLat === null
+            ? Infinity
+            : GT.stations.distanceKm(state.lastLiveLat, state.lastLiveLon, lat, lon)
+
+        if (moved < 0.15 && now - state.lastLiveAt < 120000) {
+          setLocationStatus(
+            '实时定位已更新，精度约 ±' +
+              Math.max(1, Math.round(position.coords.accuracy || 0)) +
+              ' 米。'
+          )
+          return
         }
+
+        state.lastLiveLat = lat
+        state.lastLiveLon = lon
+        state.lastLiveAt = now
+        const previousZone =
+          state.station && state.station.id === LIVE_STATION_ID
+            ? state.station.timeZone
+            : null
+        const station = makeCoordinateStation(lat, lon, 'live', previousZone)
+        selectStation(station, { keepLive: true })
+        closeSearch()
+        setLocationStatus(
+          '实时定位成功，精度约 ±' +
+            Math.max(1, Math.round(position.coords.accuracy || 0)) +
+            ' 米。'
+        )
+        if (!station.timeZone) applyResolvedTimezone(station, lat, lon)
       },
-      () => window.alert('定位失败，请检查浏览器定位权限'),
-      { timeout: 10000 }
+      (error) => {
+        const text =
+          error && error.code === 1
+            ? '定位权限被拒绝，请在浏览器设置中允许本站访问位置。'
+            : '定位暂时失败，请检查网络或 GPS 权限。'
+        setLocationStatus(text, true)
+        stopLiveLocation()
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 5000
+      }
     )
+  }
+
+  /* ---------- 地图选点 ---------- */
+
+  function mercatorX(lon, zoom) {
+    return ((lon + 180) / 360) * 256 * Math.pow(2, zoom)
+  }
+
+  function mercatorY(lat, zoom) {
+    const value =
+      (1 -
+        Math.log(
+          Math.tan((lat * Math.PI) / 180) +
+            1 / Math.cos((lat * Math.PI) / 180)
+        ) /
+          Math.PI) /
+      2
+    return value * 256 * Math.pow(2, zoom)
+  }
+
+  function longitudeFromX(x, zoom) {
+    return (x / (256 * Math.pow(2, zoom))) * 360 - 180
+  }
+
+  function latitudeFromY(y, zoom) {
+    const n = Math.PI - (2 * Math.PI * y) / (256 * Math.pow(2, zoom))
+    return (180 / Math.PI) * Math.atan(Math.sinh(n))
+  }
+
+  function normalizeLongitude(lon) {
+    let value = lon
+    while (value > 180) value -= 360
+    while (value < -180) value += 360
+    return value
+  }
+
+  function openMapPicker() {
+    stopLiveLocation()
+    const station = state.station
+    state.map.lat = station
+      ? Math.max(-85, Math.min(85, station.lat))
+      : 36.06
+    state.map.lon = station ? station.lon : 120.38
+    state.map.zoom = station && station.type === 'custom' ? 10 : 6
+    $('#map-picker').hidden = false
+    $('#map-select').disabled = false
+    $('#map-select').textContent = '使用此位置'
+    requestAnimationFrame(renderMap)
+  }
+
+  function closeMapPicker() {
+    if (state.map.renderFrame) cancelAnimationFrame(state.map.renderFrame)
+    state.map.renderFrame = null
+    $('#map-picker').hidden = true
+  }
+
+  function scheduleMapRender() {
+    if (state.map.renderFrame) return
+    state.map.renderFrame = requestAnimationFrame(() => {
+      state.map.renderFrame = null
+      renderMap()
+    })
+  }
+
+  function renderMap() {
+    const viewport = $('#map-viewport')
+    const tiles = $('#map-tiles')
+    if (!viewport || !tiles || $('#map-picker').hidden) return
+    const width = viewport.clientWidth
+    const height = viewport.clientHeight
+    if (!width || !height) return
+
+    const zoom = Math.max(2, Math.min(17, state.map.zoom))
+    const worldTiles = Math.pow(2, zoom)
+    const centerX = mercatorX(state.map.lon, zoom)
+    const centerY = mercatorY(state.map.lat, zoom)
+    const leftWorld = centerX - width / 2
+    const topWorld = centerY - height / 2
+    const minX = Math.floor(leftWorld / 256)
+    const maxX = Math.floor((leftWorld + width) / 256)
+    const minY = Math.max(0, Math.floor(topWorld / 256))
+    const maxY = Math.min(
+      worldTiles - 1,
+      Math.floor((topWorld + height) / 256)
+    )
+    const fragment = document.createDocumentFragment()
+
+    for (let tileY = minY; tileY <= maxY; tileY++) {
+      for (let tileX = minX; tileX <= maxX; tileX++) {
+        const wrappedX = ((tileX % worldTiles) + worldTiles) % worldTiles
+        const img = document.createElement('img')
+        img.alt = ''
+        img.draggable = false
+        img.decoding = 'async'
+        img.src =
+          'https://tile.openstreetmap.org/' +
+          zoom +
+          '/' +
+          wrappedX +
+          '/' +
+          tileY +
+          '.png'
+        img.style.left = tileX * 256 - leftWorld + 'px'
+        img.style.top = tileY * 256 - topWorld + 'px'
+        fragment.appendChild(img)
+      }
+    }
+    tiles.replaceChildren(fragment)
+    $('#map-coordinate').textContent =
+      state.map.lat.toFixed(5) + ', ' + state.map.lon.toFixed(5)
+  }
+
+  function zoomMap(delta) {
+    state.map.zoom = Math.max(2, Math.min(17, state.map.zoom + delta))
+    renderMap()
+  }
+
+  function setupMapPointer() {
+    const viewport = $('#map-viewport')
+    let drag = null
+
+    viewport.addEventListener('pointerdown', (event) => {
+      if (event.target.closest('button')) return
+      drag = {
+        id: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        centerX: mercatorX(state.map.lon, state.map.zoom),
+        centerY: mercatorY(state.map.lat, state.map.zoom)
+      }
+      viewport.classList.add('is-dragging')
+      try {
+        if (viewport.setPointerCapture) {
+          viewport.setPointerCapture(event.pointerId)
+        }
+      } catch (e) {
+        /* Synthetic pointers and older browsers may not expose capture. */
+      }
+    })
+
+    viewport.addEventListener('pointermove', (event) => {
+      if (!drag || drag.id !== event.pointerId) return
+      const x = drag.centerX - (event.clientX - drag.x)
+      const y = drag.centerY - (event.clientY - drag.y)
+      state.map.lon = normalizeLongitude(
+        longitudeFromX(x, state.map.zoom)
+      )
+      state.map.lat = Math.max(
+        -85,
+        Math.min(85, latitudeFromY(y, state.map.zoom))
+      )
+      scheduleMapRender()
+    })
+
+    const finish = (event) => {
+      if (!drag || drag.id !== event.pointerId) return
+      drag = null
+      viewport.classList.remove('is-dragging')
+    }
+    viewport.addEventListener('pointerup', finish)
+    viewport.addEventListener('pointercancel', finish)
+    viewport.addEventListener(
+      'wheel',
+      (event) => {
+        event.preventDefault()
+        zoomMap(event.deltaY < 0 ? 1 : -1)
+      },
+      { passive: false }
+    )
+  }
+
+  async function selectMapPoint() {
+    const button = $('#map-select')
+    button.disabled = true
+    button.textContent = '正在获取位置信息…'
+    const station = makeCoordinateStation(
+      state.map.lat,
+      state.map.lon,
+      'map',
+      null
+    )
+    const zone = await GT.data.fetchTimezone(station)
+    if (zone) {
+      station.timeZone = zone.timeZone
+      station.tz = zone.tz
+    }
+    closeMapPicker()
+    closeSearch()
+    selectStation(station)
+    switchTab('tide')
+    button.disabled = false
+    button.textContent = '使用此位置'
   }
 
   /* ------------------------------------------------------------------ */
@@ -789,6 +1299,7 @@
     if (name === 'tide') renderTide()
     if (name === 'weather') renderWeather()
     if (name === 'fishing') renderFishing()
+    if (name === 'guide') renderGuide()
     if (name === 'settings') renderSettings()
     window.scrollTo(0, 0)
   }
@@ -853,6 +1364,45 @@
       if (opt) onSetUnit(opt.dataset.group, opt.dataset.key)
     })
 
+    // 鱼种与钓组教程
+    $('#guide-mode-tabs').addEventListener('click', (e) => {
+      const button = e.target.closest('.guide-mode')
+      if (!button) return
+      state.guideMode = button.dataset.guideMode
+      renderGuide()
+      window.scrollTo(0, 0)
+    })
+    $('#guide-search').addEventListener('input', (e) => {
+      state.guideQuery = e.target.value
+      renderGuide()
+    })
+    $('#guide-types').addEventListener('click', (e) => {
+      const button = e.target.closest('.guide-type')
+      if (!button) return
+      state.guideType = button.dataset.guideType
+      renderGuide()
+    })
+    $('#species-grid').addEventListener('click', (e) => {
+      const card = e.target.closest('.species-card')
+      if (card) openSpeciesDetail(card.dataset.speciesId)
+    })
+    $('#species-detail-close').addEventListener('click', closeSpeciesDetail)
+    $('#species-detail').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) closeSpeciesDetail()
+    })
+    $('#species-detail-body').addEventListener('click', (e) => {
+      const link = e.target.closest('[data-rig-link]')
+      if (!link) return
+      const rigId = link.dataset.rigLink
+      closeSpeciesDetail()
+      state.guideMode = 'rigs'
+      renderGuide()
+      setTimeout(() => {
+        const rig = document.getElementById('rig-' + rigId)
+        if (rig) rig.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 40)
+    })
+
     // 潮汐曲线拖动
     setupTidePointer()
 
@@ -863,13 +1413,14 @@
       resizeTimer = setTimeout(() => { if (state.day) drawTide() }, 150)
     })
 
-    // 定位按钮
-    const locateBtn = document.createElement('button')
-    locateBtn.type = 'button'
-    locateBtn.className = 'search-close'
-    locateBtn.textContent = '定位'
-    locateBtn.addEventListener('click', locate)
-    $('#search-head').appendChild(locateBtn)
+    // 定位与地图选点
+    $('#search-live-location').addEventListener('click', startLiveLocation)
+    $('#search-map-location').addEventListener('click', openMapPicker)
+    $('#map-close').addEventListener('click', closeMapPicker)
+    $('#map-select').addEventListener('click', selectMapPoint)
+    $('#map-zoom-in').addEventListener('click', () => zoomMap(1))
+    $('#map-zoom-out').addEventListener('click', () => zoomMap(-1))
+    setupMapPointer()
   }
 
   /* ------------------------------------------------------------------ */
@@ -882,7 +1433,10 @@
     renderSettings()
 
     const saved = GT.store.getStation()
-    let station = saved ? GT.stations.get(saved.id) : null
+    let station = saved
+      ? GT.stations.get(saved.id) ||
+        (Number.isFinite(saved.lat) && Number.isFinite(saved.lon) ? saved : null)
+      : null
     if (!station) station = GT.stations.get('qingdao')
     selectStation(station)
   }

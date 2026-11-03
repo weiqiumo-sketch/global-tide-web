@@ -380,7 +380,46 @@
     return ms >= start || ms < end
   }
 
+  const TIME_ZONE_FORMATTERS = {}
+
+  function offsetInTimeZone(ms, timeZone) {
+    let formatter = TIME_ZONE_FORMATTERS[timeZone]
+    if (!formatter) {
+      formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23'
+      })
+      TIME_ZONE_FORMATTERS[timeZone] = formatter
+    }
+    const values = {}
+    formatter.formatToParts(new Date(ms)).forEach((part) => {
+      values[part.type] = part.value
+    })
+    const asUtc = Date.UTC(
+      Number(values.year),
+      Number(values.month) - 1,
+      Number(values.day),
+      Number(values.hour),
+      Number(values.minute),
+      Number(values.second)
+    )
+    return (asUtc - ms) / 3600000
+  }
+
   function offsetFor(station, ms) {
+    if (station && station.timeZone) {
+      try {
+        return offsetInTimeZone(ms, station.timeZone)
+      } catch (e) {
+        /* Fall back to the bundled offset rules. */
+      }
+    }
     const std = station.tz || 0
     const rule = station.dst
     if (!rule) return std

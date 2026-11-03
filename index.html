@@ -52,6 +52,7 @@
             <span class="legend-item"><i class="dot dot-high"></i>满潮</span>
             <span class="legend-item"><i class="dot dot-low"></i>干潮</span>
             <span class="legend-item"><i class="dot dot-now"></i>此刻</span>
+            <span class="legend-item"><i class="dot dot-fish"></i>鱼情佳</span>
           </div>
 
           <div class="now-strip" id="tide-now-strip" hidden>
@@ -247,7 +248,44 @@
           <div class="cal" id="fish-cal"></div>
         </div>
 
+        <button class="link-card gutter guide-entry" type="button" data-go="guide">
+          <span class="link-kicker">鱼种 · 饵料 · 钓组</span>
+          <span class="link-title">查看目标鱼与钓组教程</span>
+          <span class="link-sub">常见鱼种位置、饵料搭配和钓组组装步骤</span>
+          <span class="link-arrow">→</span>
+        </button>
+
         <div class="note gutter">以上为经验模型参考值，不构成渔获保证。实际出海请以现场海况为准。</div>
+        <div class="safe-bottom"></div>
+      </div>
+    </section>
+
+    <!-- ============ 鱼种与钓组 ============ -->
+    <section class="view" id="view-guide">
+      <header class="page-head gutter">
+        <div class="page-title">鱼种与钓组</div>
+        <div class="page-lead">先选目标鱼，再按水层和地形搭配饵料与钓组</div>
+      </header>
+
+      <div class="body-pad">
+        <div class="guide-mode-tabs gutter" id="guide-mode-tabs">
+          <button class="guide-mode is-on" type="button" data-guide-mode="species">鱼种图鉴</button>
+          <button class="guide-mode" type="button" data-guide-mode="rigs">钓组教程</button>
+        </div>
+
+        <div id="guide-species-view">
+          <div class="guide-tools gutter">
+            <input class="guide-search" id="guide-search" type="search" placeholder="搜索鱼种、位置或饵料" autocomplete="off" />
+            <div class="guide-types" id="guide-types"></div>
+          </div>
+          <div class="species-grid gutter" id="species-grid"></div>
+        </div>
+
+        <div class="rig-list" id="guide-rigs" hidden></div>
+
+        <div class="note gutter">
+          鱼种、饵料和钓组为一般性海钓参考。开口时间、体型和资源状况会随海区变化；作钓前请确认当地许可、禁渔期、最小尺寸和数量限制。
+        </div>
         <div class="safe-bottom"></div>
       </div>
     </section>
@@ -268,18 +306,19 @@
           <div class="card-hd"><span class="card-title">数据来源</span></div>
           <div class="about">
             <div class="about-row"><span>潮汐（美国站点）</span><span>NOAA CO-OPS 官方调和常数</span></div>
-            <div class="about-row"><span>潮汐（其他站点）</span><span>本地天文估算模型</span></div>
+            <div class="about-row"><span>潮汐（其他站点）</span><span>Open-Meteo 全球潮位</span></div>
+            <div class="about-row"><span>潮汐兜底</span><span>本地天文估算模型</span></div>
             <div class="about-row"><span>天气 / 风浪</span><span>Open-Meteo（免费，免密钥）</span></div>
           </div>
           <div class="about-note">
-            除美国站点外，潮位为估算趋势值，标注「估算数据」；不可用于航行安全水位。天气与风浪数据需联网获取。
+            潮汐会自动尝试 NOAA、Open-Meteo 全球潮位和本地估算模型，失败时逐级回退并标注当前来源。估算潮位不可用于航行安全水位。
           </div>
         </div>
 
         <div class="card gutter">
           <div class="card-hd"><span class="card-title">关于</span></div>
           <div class="about">
-            <div class="about-row"><span>版本</span><span id="app-version">v1.0.0</span></div>
+            <div class="about-row"><span>版本</span><span id="app-version">v1.1.0</span></div>
             <div class="about-row"><span>数据缓存</span><span>本地浏览器存储，可离线查看已缓存站点</span></div>
           </div>
         </div>
@@ -295,6 +334,17 @@
           <input class="search-input" id="search-input" type="search" placeholder="搜索港口 / 验潮站 / 岛屿 / 潜水点" autocomplete="off" />
           <button class="search-close" id="search-close" type="button">取消</button>
         </div>
+        <div class="location-actions">
+          <button class="location-action is-primary" id="search-live-location" type="button">
+            <span class="location-action-icon">◎</span>
+            <span><b>实时定位</b><small>跟随设备当前位置</small></span>
+          </button>
+          <button class="location-action" id="search-map-location" type="button">
+            <span class="location-action-icon">⌖</span>
+            <span><b>地图选点</b><small>从地图选择任意位置</small></span>
+          </button>
+        </div>
+        <div class="location-status" id="location-status" hidden></div>
         <div class="type-chips" id="search-types"></div>
         <div class="search-body">
           <div class="search-section" id="search-recent-wrap" hidden>
@@ -306,6 +356,48 @@
             <div id="search-results"></div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ============ 地图选点 ============ -->
+    <div class="map-picker" id="map-picker" hidden>
+      <div class="map-panel">
+        <div class="map-head">
+          <div>
+            <div class="map-title">选择位置</div>
+            <div class="map-subtitle">拖动地图，将准星移到目标位置</div>
+          </div>
+          <button class="map-close" id="map-close" type="button" aria-label="关闭地图选点">关闭</button>
+        </div>
+        <div class="map-viewport" id="map-viewport">
+          <div class="map-tiles" id="map-tiles"></div>
+          <div class="map-crosshair" aria-hidden="true">
+            <i></i><i></i>
+          </div>
+          <a class="map-attribution" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap</a>
+          <div class="map-zoom">
+            <button id="map-zoom-in" type="button" aria-label="放大地图">+</button>
+            <button id="map-zoom-out" type="button" aria-label="缩小地图">−</button>
+          </div>
+        </div>
+        <div class="map-coordinate">
+          <span>经纬度</span>
+          <strong class="num" id="map-coordinate">--</strong>
+        </div>
+        <button class="map-select" id="map-select" type="button">使用此位置</button>
+      </div>
+    </div>
+
+    <div class="species-detail" id="species-detail" hidden>
+      <div class="species-detail-panel">
+        <div class="species-detail-head">
+          <div>
+            <div class="species-detail-kicker" id="species-detail-kicker">目标鱼种</div>
+            <div class="species-detail-title" id="species-detail-title"></div>
+          </div>
+          <button class="map-close" id="species-detail-close" type="button">关闭</button>
+        </div>
+        <div class="species-detail-body" id="species-detail-body"></div>
       </div>
     </div>
 
@@ -321,6 +413,9 @@
     <button class="tab" data-tab="fishing" type="button">
       <span class="tab-icon ti-fish"></span><span class="tab-label">鱼情</span>
     </button>
+    <button class="tab" data-tab="guide" type="button">
+      <span class="tab-icon ti-guide"></span><span class="tab-label">鱼种</span>
+    </button>
     <button class="tab" data-tab="settings" type="button">
       <span class="tab-icon ti-settings"></span><span class="tab-label">设置</span>
     </button>
@@ -332,6 +427,7 @@
   <script src="js/util.js"></script>
   <script src="js/draw.js"></script>
   <script src="js/stations.js"></script>
+  <script src="js/guide.js"></script>
   <script src="js/store.js"></script>
   <script src="js/data.js"></script>
   <script src="js/app.js"></script>

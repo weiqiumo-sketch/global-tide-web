@@ -21,6 +21,7 @@
 
   const SOURCE_LABEL = {
     noaa: 'NOAA 权威',
+    openmeteo: 'Open-Meteo 潮位',
     worldtides: 'WorldTides',
     cache: '离线缓存',
     estimate: '估算数据',
@@ -85,6 +86,19 @@
     return { z0: 0, constituents: constituents }
   }
 
+  function harmonicsId(station) {
+    if (station.type === 'custom') {
+      return (
+        station.id +
+        ':' +
+        Number(station.lat).toFixed(3) +
+        ',' +
+        Number(station.lon).toFixed(3)
+      )
+    }
+    return station.id
+  }
+
   async function fetchNoaa(station) {
     const url =
       'https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/' +
@@ -93,7 +107,43 @@
     const data = await fetchJson(url, 12000)
     const model = noaaToModel(data)
     if (!model) throw new Error('noaa: too few constituents')
-    store.setHarmonics(station.id, { model: model, provider: 'noaa', datum: 'MLLW' })
+    store.setHarmonics(harmonicsId(station), {
+      model: model,
+      provider: 'noaa',
+      datum: 'MLLW'
+    })
+    return model
+  }
+
+  async function fetchOpenMeteoTide(station) {
+    const url =
+      'https://marine-api.open-meteo.com/v1/marine' +
+      '?latitude=' + station.lat +
+      '&longitude=' + station.lon +
+      '&hourly=sea_level_height_msl' +
+      '&forecast_days=16&timezone=GMT'
+    const json = await fetchJson(url, 18000)
+    const hourly = json.hourly || {}
+    const times = hourly.time || []
+    const values = hourly.sea_level_height_msl || []
+    const series = []
+    for (let i = 0; i < times.length; i++) {
+      const value = values[i]
+      if (!Number.isFinite(value)) continue
+      series.push({ t: parseApiTime(times[i]), h: value })
+    }
+    if (series.length < 72) throw new Error('openmeteo-tide: insufficient data')
+    const fitted = tide.fitSeries(series)
+    if (!fitted || !Number.isFinite(fitted.z0) || fitted.rms > 0.8) {
+      throw new Error('openmeteo-tide: fit rejected')
+    }
+    const model = { z0: fitted.z0, constituents: fitted.constituents }
+    store.setHarmonics(harmonicsId(station), {
+      model: model,
+      provider: 'openmeteo',
+      datum: 'MSL',
+      spanDays: Math.round(series.length / 24)
+    })
     return model
   }
 
@@ -106,17 +156,35 @@
     return tide.synthesizeModel({ lat: station.lat })
   }
 
+  async function fetchTimezone(station) {
+    try {
+      const url =
+        'https://api.open-meteo.com/v1/forecast' +
+        '?latitude=' + station.lat +
+        '&longitude=' + station.lon +
+        '&current=temperature_2m&timezone=auto'
+      const json = await fetchJson(url, 8000)
+      if (!json.timezone) return null
+      return {
+        timeZone: json.timezone,
+        tz: Number(json.utc_offset_seconds || 0) / 3600
+      }
+    } catch (e) {
+      return null
+    }
+  }
+
   /**
    * 异步获取潮汐模型：缓存 → NOAA → 估算
    * @returns {Promise<{model, source, datum, fetchedAt}>}
    */
   async function getModel(station) {
     // 1. 本地缓存（离线可用）
-    const cached = store.getHarmonics(station.id)
+    const cached = store.getHarmonics(harmonicsId(station))
     if (cached && cached.constituents && cached.constituents.length) {
       return {
         model: { z0: cached.z0, constituents: cached.constituents },
-        source: 'cache',
+        source: cached.provider || 'cache',
         datum: cached.datum || '',
         fetchedAt: cached.fetchedAt || 0
       }
@@ -132,7 +200,20 @@
       }
     }
 
-    // 3. 估算模型
+    // 3. Open-Meteo 全球潮位模型，按多日潮位序列反演调和常数
+    try {
+      const model = await fetchOpenMeteoTide(station)
+      return {
+        model: model,
+        source: 'openmeteo',
+        datum: 'MSL',
+        fetchedAt: Date.now()
+      }
+    } catch (e) {
+      /* Fall through to the offline astronomy model. */
+    }
+
+    // 4. 离线天文估算模型
     return { model: estimateModel(station), source: 'estimate', datum: '', fetchedAt: 0 }
   }
 
@@ -346,7 +427,10 @@
     fetchJson: fetchJson,
     parseISO: parseISO,
     fetchNoaa: fetchNoaa,
+    fetchOpenMeteoTide: fetchOpenMeteoTide,
+    harmonicsId: harmonicsId,
     estimateModel: estimateModel,
+    fetchTimezone: fetchTimezone,
     getModel: getModel,
     buildDay: buildDay,
     dayEvents: dayEvents,

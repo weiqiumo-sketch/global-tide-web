@@ -61,12 +61,7 @@
   }
 
   function setStation(station) {
-    safeSet(KEY.station, {
-      id: station.id,
-      name: station.name,
-      lat: station.lat,
-      lon: station.lon
-    })
+    safeSet(KEY.station, Object.assign({}, station))
     pushRecent(station)
   }
 
@@ -76,7 +71,7 @@
 
   function pushRecent(station) {
     const list = getRecent().filter((s) => s.id !== station.id)
-    list.unshift({ id: station.id, name: station.name })
+    list.unshift(Object.assign({}, station))
     safeSet(KEY.recent, list.slice(0, 8))
   }
 
