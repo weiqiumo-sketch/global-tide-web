@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#071a20" />
+  <title>全球潮汐 · 潮汐预报与黄金钓鱼时间</title>
+  <meta name="description" content="全球潮汐：潮汐曲线、涨退潮时刻、天气风浪、黄金钓鱼时间、月相。" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="app">
+
+    <!-- ============ 潮汐 ============ -->
+    <section class="view is-active" id="view-tide">
+      <header class="hero">
+        <div class="hero-top gutter">
+          <button class="loc" id="tide-loc" type="button">
+            <span class="loc-name" id="tide-loc-name">青岛</span>
+            <span class="loc-sub" id="tide-loc-sub">中国 · 36.06°, 120.38°</span>
+          </button>
+          <button class="loc-icon" id="tide-search" type="button" aria-label="搜索站点">
+            <span class="search-glyph"></span>
+          </button>
+        </div>
+        <div class="hero-date gutter">
+          <div class="date-main" id="tide-date-text">1月1日 · 周三</div>
+          <div class="date-sub">
+            <span class="tag" id="tide-source">估算数据</span>
+            <span class="datum" id="tide-datum"></span>
+          </div>
+        </div>
+      </header>
+
+      <div class="card gutter">
+        <div class="card-hd">
+          <span class="card-title">潮汐曲线</span>
+          <span class="card-note" id="tide-unit-note">米 · 拖动查潮高</span>
+        </div>
+
+        <div class="loading" id="tide-loading" hidden>
+          <div class="skel skel-line"></div>
+          <div class="skel skel-chart"></div>
+        </div>
+
+        <div id="tide-body">
+          <div class="chart-wrap" id="tide-chart-wrap">
+            <canvas id="tide-canvas"></canvas>
+          </div>
+
+          <div class="legend">
+            <span class="legend-item"><i class="dot dot-high"></i>满潮</span>
+            <span class="legend-item"><i class="dot dot-low"></i>干潮</span>
+            <span class="legend-item"><i class="dot dot-now"></i>此刻</span>
+          </div>
+
+          <div class="now-strip" id="tide-now-strip" hidden>
+            <div class="now-left">
+              <div class="now-val"><span class="num" id="tide-now-height">--</span><span class="now-unit" id="tide-now-unit">m</span></div>
+              <div class="now-state" id="tide-now-state">涨潮中</div>
+            </div>
+            <div class="now-right">
+              <div class="now-next">
+                <span class="muted" id="tide-next-type">满潮</span>
+                <span class="now-next-time num" id="tide-next-time">--:--</span>
+                <span class="now-next-rel muted" id="tide-next-rel"></span>
+              </div>
+              <div class="now-next-h" id="tide-next-height">-- m</div>
+            </div>
+          </div>
+
+          <div class="now-strip" id="tide-notoday-strip" hidden>
+            <div class="now-left"><div class="now-state muted">正在查看历史 / 未来潮汐</div></div>
+            <div class="now-right"><button class="back-today" id="tide-back-today" type="button">回到今天</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card gutter" id="tide-events-card" hidden>
+        <div class="card-hd">
+          <span class="card-title">涨退潮时刻</span>
+          <span class="card-note">从最高到最低为退潮，反之涨潮</span>
+        </div>
+        <div class="tbl" id="tide-events"></div>
+      </div>
+
+      <div class="card gutter">
+        <div class="card-hd">
+          <span class="card-title">选择日期</span>
+          <input type="date" class="date-input" id="tide-datepicker" />
+        </div>
+        <div class="day-strip" id="tide-days"></div>
+      </div>
+
+      <div class="links gutter">
+        <button class="link-card" type="button" data-go="weather">
+          <span class="link-kicker">风浪 · 16 天</span>
+          <span class="link-title">天气与风浪预报</span>
+          <span class="link-sub">逐小时天气、浪高浪速、风力等级、水温气压</span>
+          <span class="link-arrow">→</span>
+        </button>
+        <button class="link-card" type="button" data-go="fishing">
+          <span class="link-kicker">黄金钓鱼时间</span>
+          <span class="link-title">鱼情与作钓时段</span>
+          <span class="link-sub">月相 + 潮汐 + 气压 + 风力，算出今天鱼最活跃的时段</span>
+          <span class="link-arrow">→</span>
+        </button>
+      </div>
+
+      <div class="safe-bottom"></div>
+    </section>
+
+    <!-- ============ 天气 ============ -->
+    <section class="view" id="view-weather">
+      <header class="page-head gutter">
+        <div class="page-title">天气与风浪</div>
+        <button class="loc" id="wx-loc" type="button">
+          <span class="loc-name" id="wx-loc-name">青岛</span>
+          <span class="loc-sub" id="wx-loc-sub">中国</span>
+        </button>
+      </header>
+
+      <div class="body-pad">
+        <div class="card gutter">
+          <div class="card-hd">
+            <span class="card-title">当前天气</span>
+            <span class="card-note" id="wx-updated"></span>
+          </div>
+
+          <div id="wx-current"></div>
+
+          <div class="empty" id="wx-empty" hidden>
+            暂无天气与风浪数据。请确认设备已联网，随后会自动重试或重新加载。
+          </div>
+        </div>
+
+        <div class="card gutter" id="wx-sea-card" hidden>
+          <div class="card-hd"><span class="card-title">出海适宜度</span></div>
+          <div class="sea">
+            <div class="sea-head">
+              <span class="sea-level" id="wx-sea-level">适宜</span>
+            </div>
+            <div class="sea-track"><div class="sea-fill" id="wx-sea-fill"></div></div>
+          </div>
+        </div>
+
+        <div class="card gutter" id="wx-hourly-card" hidden>
+          <div class="card-hd">
+            <span class="card-title">逐小时</span>
+            <span class="card-note">未来 24 小时</span>
+          </div>
+          <div class="hour-strip" id="wx-hourly"></div>
+        </div>
+
+        <div class="card gutter" id="wx-marine-card" hidden>
+          <div class="card-hd">
+            <span class="card-title">风浪与海洋</span>
+            <span class="card-note">实时观测值</span>
+          </div>
+          <div class="tbl" id="wx-marine"></div>
+        </div>
+
+        <div class="card gutter" id="wx-daily-card" hidden>
+          <div class="card-hd">
+            <span class="card-title">16 天预报</span>
+            <span class="card-note">中长期趋势</span>
+          </div>
+          <div class="tbl" id="wx-daily"></div>
+        </div>
+
+        <div class="safe-bottom"></div>
+      </div>
+    </section>
+
+    <!-- ============ 鱼情 ============ -->
+    <section class="view" id="view-fishing">
+      <header class="page-head gutter">
+        <div class="page-title">黄金钓鱼时间</div>
+        <button class="loc" id="fish-loc" type="button">
+          <span class="loc-name" id="fish-loc-name">青岛</span>
+          <span class="loc-sub" id="fish-loc-sub">中国</span>
+        </button>
+      </header>
+
+      <div class="body-pad">
+        <div class="score-hero gutter">
+          <div class="score-num-wrap">
+            <div class="score-num num" id="fish-score">--</div>
+            <div class="score-cap">鱼活跃度</div>
+          </div>
+          <div class="score-meta">
+            <div class="score-level" id="fish-level">--</div>
+            <div class="score-loc" id="fish-loc-2">青岛</div>
+            <div class="score-hint">算法综合月相、潮汐、气压、风力、水温</div>
+          </div>
+        </div>
+
+        <div class="card gutter" id="fish-best-card" hidden>
+          <div class="card-hd">
+            <span class="card-title">最佳作钓时段</span>
+            <span class="card-note">不再靠经验盲猜</span>
+          </div>
+          <div class="best-list" id="fish-best"></div>
+        </div>
+
+        <div class="card gutter">
+          <div class="card-hd">
+            <span class="card-title">当地时间活跃度</span>
+            <span class="card-note">越亮鱼口越好</span>
+          </div>
+          <div class="bars" id="fish-bars"></div>
+          <div class="legend-row">
+            <span class="legend-item"><i class="dot dot-best"></i>最佳时段</span>
+            <span class="legend-item"><i class="dot dot-now"></i>此刻</span>
+          </div>
+        </div>
+
+        <div class="card gutter">
+          <div class="card-hd">
+            <span class="card-title">月相与潮汐</span>
+            <span class="card-note">月相决定大小潮</span>
+          </div>
+          <div class="moon-row">
+            <canvas id="moon-canvas" width="150" height="150"></canvas>
+            <div class="moon-info" id="fish-moon"></div>
+          </div>
+        </div>
+
+        <div class="card gutter" id="fish-factors-card" hidden>
+          <div class="card-hd">
+            <span class="card-title">今日因子</span>
+            <span class="card-note">为什么是这个时段</span>
+          </div>
+          <div id="fish-factors"></div>
+        </div>
+
+        <div class="card gutter" id="fish-concl-card" hidden>
+          <div class="card-hd"><span class="card-title">一句话结论</span></div>
+          <div id="fish-concl"></div>
+        </div>
+
+        <div class="card gutter">
+          <div class="card-hd">
+            <span class="card-title">7 天鱼情日历</span>
+            <span class="card-note">提前安排出钓</span>
+          </div>
+          <div class="cal" id="fish-cal"></div>
+        </div>
+
+        <div class="note gutter">以上为经验模型参考值，不构成渔获保证。实际出海请以现场海况为准。</div>
+        <div class="safe-bottom"></div>
+      </div>
+    </section>
+
+    <!-- ============ 设置 ============ -->
+    <section class="view" id="view-settings">
+      <header class="page-head gutter">
+        <div class="page-title">设置</div>
+      </header>
+
+      <div class="body-pad">
+        <div class="card gutter">
+          <div class="card-hd"><span class="card-title">单位</span></div>
+          <div class="unit-group" id="settings-units"></div>
+        </div>
+
+        <div class="card gutter">
+          <div class="card-hd"><span class="card-title">数据来源</span></div>
+          <div class="about">
+            <div class="about-row"><span>潮汐（美国站点）</span><span>NOAA CO-OPS 官方调和常数</span></div>
+            <div class="about-row"><span>潮汐（其他站点）</span><span>本地天文估算模型</span></div>
+            <div class="about-row"><span>天气 / 风浪</span><span>Open-Meteo（免费，免密钥）</span></div>
+          </div>
+          <div class="about-note">
+            除美国站点外，潮位为估算趋势值，标注「估算数据」；不可用于航行安全水位。天气与风浪数据需联网获取。
+          </div>
+        </div>
+
+        <div class="card gutter">
+          <div class="card-hd"><span class="card-title">关于</span></div>
+          <div class="about">
+            <div class="about-row"><span>版本</span><span id="app-version">v1.0.0</span></div>
+            <div class="about-row"><span>数据缓存</span><span>本地浏览器存储，可离线查看已缓存站点</span></div>
+          </div>
+        </div>
+
+        <div class="safe-bottom"></div>
+      </div>
+    </section>
+
+    <!-- ============ 搜索 ============ -->
+    <div class="search" id="search" hidden>
+      <div class="search-panel">
+        <div class="search-head" id="search-head">
+          <input class="search-input" id="search-input" type="search" placeholder="搜索港口 / 验潮站 / 岛屿 / 潜水点" autocomplete="off" />
+          <button class="search-close" id="search-close" type="button">取消</button>
+        </div>
+        <div class="type-chips" id="search-types"></div>
+        <div class="search-body">
+          <div class="search-section" id="search-recent-wrap" hidden>
+            <div class="search-section-title">最近使用</div>
+            <div id="search-recent"></div>
+          </div>
+          <div class="search-section">
+            <div class="search-section-title" id="search-result-title">全部站点</div>
+            <div id="search-results"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <nav class="tabbar">
+    <button class="tab is-active" data-tab="tide" type="button">
+      <span class="tab-icon ti-tide"></span><span class="tab-label">潮汐</span>
+    </button>
+    <button class="tab" data-tab="weather" type="button">
+      <span class="tab-icon ti-weather"></span><span class="tab-label">天气</span>
+    </button>
+    <button class="tab" data-tab="fishing" type="button">
+      <span class="tab-icon ti-fish"></span><span class="tab-label">鱼情</span>
+    </button>
+    <button class="tab" data-tab="settings" type="button">
+      <span class="tab-icon ti-settings"></span><span class="tab-label">设置</span>
+    </button>
+  </nav>
+
+  <script src="js/astro.js"></script>
+  <script src="js/tide.js"></script>
+  <script src="js/fishing.js"></script>
+  <script src="js/util.js"></script>
+  <script src="js/draw.js"></script>
+  <script src="js/stations.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
